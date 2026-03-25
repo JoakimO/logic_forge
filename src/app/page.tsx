@@ -447,7 +447,6 @@ export default function HomePage() {
 
   const startQuest = (group: AgeGroupId) => {
     setAgeGroup(group);
-    setFrontAgeGroup(null);
     const key: ProgressKey = puzzleType;
     const saved = progressByTypeRef.current[key] ?? defaultProgress;
     const normalized = normalizeProgress(saved);
@@ -463,8 +462,9 @@ export default function HomePage() {
   };
 
   const resetFrontPage = () => {
+    // Keep the last chosen age group selected on the start screen.
+    setFrontAgeGroup(ageGroup);
     setAgeGroup(null);
-    setFrontAgeGroup(null);
     setRewardBanner(null);
     setFeedback(language === "sv" ? sv.chooseAgeFirst : en.chooseAgeFirst);
   };

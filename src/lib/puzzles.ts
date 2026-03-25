@@ -40,106 +40,84 @@ function shuffle<T>(items: T[]): T[] {
 }
 
 function buildPatternPuzzle(difficulty: number, language: Language): Puzzle {
+  type PatternKind = "add" | "sub";
+
+  const clampPositive = (n: number) => Math.max(1, n);
+
+  const kind: PatternKind = (() => {
+    // More difficult => more variety.
+    return Math.random() < (difficulty <= 1 ? 0.7 : 0.5) ? "add" : "sub";
+  })();
+
+  const renderTokens = (tokens: (number | string)[]) => tokens.join(" , ");
+
   const step = Math.max(1, Math.min(4, difficulty));
-  const start = Math.floor(Math.random() * 4) + 1;
-  const sequence = [start, start + step, start + step * 2];
-  const answer = String(start + step * 3);
-  const decoyA = String(Number(answer) + 1);
-  const decoyB = String(Number(answer) - 1);
+  const sign = kind === "add" ? 1 : -1;
+  // Keep values positive for kids.
+  const start = kind === "add" ? Math.floor(Math.random() * 6) + 3 : Math.floor(Math.random() * 10) + 10;
+  const a = start;
+  const b = start + sign * step;
+  const c = start + sign * step * 2;
+  const d = start + sign * step * 3;
+
+  const answer = String(clampPositive(d));
+  const sequence = [a, b, c].map(clampPositive);
+  const decoyA = String(clampPositive(Number(answer) + (Math.random() < 0.5 ? 1 : 2)));
+  const decoyB = String(clampPositive(Number(answer) - (Math.random() < 0.5 ? 1 : 2)));
 
   const prompt =
     language === "sv"
-      ? `Vad kommer härnäst? ${sequence.join(" , ")} , ?`
-      : `What comes next? ${sequence.join(" , ")} , ?`;
+      ? `Vad kommer härnäst? ${renderTokens(sequence)} , ?`
+      : `What comes next? ${renderTokens(sequence)} , ?`;
   const hint =
     language === "sv"
-      ? "Titta på hur mycket varje tal ökar i varje steg."
-      : "Look at how much each number grows every step.";
+      ? kind === "add"
+        ? "Varje tal blir större med samma antal."
+        : "Varje tal blir mindre med samma antal."
+      : kind === "add"
+        ? "Each number gets bigger by the same amount."
+        : "Each number gets smaller by the same amount.";
 
   return {
     id: `pattern-${Date.now()}`,
     prompt,
-    options: shuffle([answer, decoyA, decoyB]),
+    options: shuffle([answer, decoyA, decoyB].filter((v, i, arr) => arr.indexOf(v) === i)),
     answer,
     hint
   };
 }
 
 function buildEmojiPuzzle(difficulty: number, language: Language): Puzzle {
-  type EmojiRule = "repeat" | "rotateByStep" | "mirrorEveryOther";
-
   const pickDistinctEmojis = (count: number) => shuffle(emojiOptions).slice(0, count);
-
-  const rotateLeft = (arr: string[], k: number) => {
-    const shift = ((k % arr.length) + arr.length) % arr.length;
-    return [...arr.slice(shift), ...arr.slice(0, shift)];
-  };
-
-  const mirror = (arr: string[]) => [...arr].reverse();
 
   // Ensure at least 3 unique emojis exist in the pattern,
   // so we can always offer 3 choices drawn from the same cycle.
   const cycleLen = (() => {
     if (difficulty <= 1) return 3;
-    if (difficulty === 2) return Math.random() < 0.65 ? 3 : 4;
-    // difficulty >= 3
-    return Math.random() < 0.55 ? 4 : 3;
-  })();
-  // Keep the prompt short and consistent (<= 6 icons) so kids can spot patterns.
-  const displayLen = difficulty <= 1 ? 4 : 6;
-
-  const rule: EmojiRule = (() => {
-    if (difficulty <= 2) return "repeat";
-    if (difficulty === 3) return Math.random() < 0.55 ? "rotateByStep" : "mirrorEveryOther";
-    // difficulty 4
-    return Math.random() < 0.55 ? "mirrorEveryOther" : "rotateByStep";
+    if (difficulty === 2) return 3;
+    if (difficulty === 3) return 4;
+    return 5;
   })();
 
-  // Rotate amount for the rotate rule (adds variation without confusing the visible prompt).
-  const rotStep = 1; // for cycleLen=3 this means a consistent shift; for cycleLen=2 it swaps ends.
+  // Higher levels = longer visible sequence (simple repeating cycle only).
+  const displayLen = (() => {
+    if (difficulty <= 1) return 5;
+    if (difficulty === 2) return 7;
+    if (difficulty === 3) return 9;
+    return 12;
+  })();
   const cycle = pickDistinctEmojis(cycleLen);
 
-  const tokenAt = (index: number, activeRule: EmojiRule): string => {
-    const blockSize = cycle.length;
-    const blockIndex = Math.floor(index / blockSize);
-    const inBlock = index % blockSize;
+  const tokenAt = (index: number): string => cycle[index % cycle.length];
 
-    if (activeRule === "repeat") return cycle[inBlock];
+  const displayTokens = Array.from({ length: displayLen }, (_, i) => tokenAt(i));
+  const answer = tokenAt(displayLen);
 
-    if (activeRule === "rotateByStep") {
-      const rotated = rotateLeft(cycle, rotStep * blockIndex);
-      return rotated[inBlock];
-    }
-
-    // mirrorEveryOther: odd blocks go backwards.
-    const useMirrored = blockIndex % 2 === 0;
-    const mapped = useMirrored ? cycle : mirror(cycle);
-    return mapped[inBlock];
-  };
-
-  const displayTokens = Array.from({ length: displayLen }, (_, i) => tokenAt(i, rule));
-  const answer = tokenAt(displayLen, rule);
-
-  // Make options feel like “different plausible next steps” instead of random emojis.
-  const altRepeat = tokenAt(displayLen, "repeat");
-  const altRotate = tokenAt(displayLen, "rotateByStep");
-  const altMirror = tokenAt(displayLen, "mirrorEveryOther");
-
-  // Always return exactly 3 distinct options (so the UI is never missing choices).
-  // Also: avoid “outsider” emojis that never appear in the prompt.
-  const preferredUnique = Array.from(new Set([answer, altRepeat, altRotate, altMirror]));
-  const decoys: string[] = preferredUnique.filter((v) => v !== answer).slice(0, 2);
-
-  // Fill remaining decoys using only the cycle (so every option appears in the pattern).
-  if (decoys.length < 2) {
-    const pool = shuffle(cycle.filter((e) => e !== answer && !decoys.includes(e)));
-    for (const e of pool) {
-      if (decoys.length >= 2) break;
-      decoys.push(e);
-    }
-  }
-
-  const options = shuffle([answer, decoys[0], decoys[1]].slice(0, 3));
+  // Always 3 options, all taken from the same cycle (so every option appears in the pattern).
+  const decoyPool = shuffle(cycle.filter((e) => e !== answer));
+  const decoy1 = decoyPool[0];
+  const decoy2 = decoyPool[1];
+  const options = shuffle([answer, decoy1, decoy2]);
 
   const prompt =
     language === "sv"
@@ -148,16 +126,8 @@ function buildEmojiPuzzle(difficulty: number, language: Language): Puzzle {
 
   const hint =
     language === "sv"
-      ? rule === "repeat"
-        ? "Titta på ett mönster som upprepas. Fortsätt i samma ordning."
-        : rule === "rotateByStep"
-          ? "Varje ny upprepning flyttar vännerna lite åt sidan."
-          : "Varje andra upprepning går ordningen baklänges."
-      : rule === "repeat"
-        ? "Spot the repeating pattern. Keep going in the same order."
-        : rule === "rotateByStep"
-          ? "Each new repeat shifts the order a little."
-          : "Every other repeat flips the order backwards.";
+      ? "Titta på mönstret som upprepas. Fortsätt i samma ordning."
+      : "Spot the repeating pattern. Keep going in the same order.";
   return {
     id: `emoji-${Date.now()}`,
     prompt,
